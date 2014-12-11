@@ -1,0 +1,417 @@
+#!/usr/bin/env python
+# Purpose : SOA LogMonitor
+# Author : idiotTCSer
+
+# Version Info:
+# Build version : 3.0
+# Dev Build Version : 3.0
+# Interpreter : Python 2.7.3 inbuilt interpreter
+# Language : Python 2.7.3
+# Platform : win32/64
+
+# For more information about the same check the readme file and the help doc
+
+import wx
+import win32wnet
+import win32com.client
+from win32netcon import RESOURCETYPE_DISK as DISK
+import sys
+import os
+import fileinput
+import shutil
+import re
+import time
+import traceback
+
+# Programming/Coding should be fun, that's why I hate Java
+
+
+# default --> don't alert for anything
+alertOnError = False
+alertOnRestart = False
+alertOnException = False
+alertOnHT = False
+alertOnFtnft = False
+alertOnDeadlock = False
+alertOnParseParam = False
+alertOnServRst = False
+
+def MapNetworkDrive(inpUsrName, inpPasswd):
+    try:
+        if os.path.exists("K:"):
+            network = win32com.client.Dispatch("WScript.Network")
+            network.RemoveNetworkDrive("K:", True, True)
+
+
+            
+            resource = win32wnet.NETRESOURCE()
+            resource.lpRemoteName = "drive"
+
+            # 41 -> K:
+
+            # Connect to that remote drive using the win32 connection man
+            win32wnet.WNetAddConnection2(resource, Password = inpPasswd, UserName = inpUsrName)
+            win32wnet.WNetAddConnection2(DISK, "K:", "drive")
+        else:
+            resource = win32wnet.NETRESOURCE()
+            resource.lpRemoteName = "drive"
+
+            # 41 -> K: || 42 -> L:
+
+            # Connect to that remote drive using the win32 connection man
+            win32wnet.WNetAddConnection2(resource, Password = inpPasswd, UserName = inpUsrName)
+            win32wnet.WNetAddConnection2(DISK, "K:", "drive")
+
+
+        if os.path.exists("L:"):
+            network = win32com.client.Dispatch("WScript.Network")
+            network.RemoveNetworkDrive("L:", True, True)
+
+
+            
+            resource = win32wnet.NETRESOURCE()
+            resource.lpRemoteName = "drive"
+
+            # 42 -> L:
+
+        
+
+            # Connect to that remote drive using the win32 connection man
+            win32wnet.WNetAddConnection2(resource, Password = inpPasswd, UserName = inpUsrName)
+            win32wnet.WNetAddConnection2(DISK, "L:", "drive")
+
+        else:
+            nxresource = win32wnet.NETRESOURCE()
+            nxresource.lpRemoteName = "drive"
+
+            # Connect to that remote drive using the win32 connection man
+            win32wnet.WNetAddConnection2(nxresource, Password = inpPasswd, UserName = inpUsrName)
+            win32wnet.WNetAddConnection2(DISK, "L:", "drive")
+
+        return True
+    except:
+        print "Username/password error"
+
+class tpBox(wx.Frame):
+    def __init__(self, parent, title, style):
+        super(tpBox, self).__init__(parent, title=title, style=style, size=(375, 375))
+
+        self.displayUI()
+
+    def AlphaCycle(self, evt):
+        if self.amount >= 255:
+            pass
+        elif self.amount < 255:
+            self.amount += self.delta
+            self.SetTransparent(self.amount)
+
+    def displayUI(self):
+        menuBar = wx.MenuBar()
+        fileMenu = wx.Menu()
+        helpMenu = wx.Menu()
+
+        self.amount = 0
+        self.delta = 5
+
+
+        fileItem = fileMenu.Append(wx.ID_EXIT, "Quit      Ctrl+Q", "Quit Application")
+        aboutItem = helpMenu.Append(wx.ID_ANY, "About Python Text Monitor", "Python Text Monitor Help")
+
+        menuBar.Append(fileMenu, "&File")
+        menuBar.Append(helpMenu, "&Help")
+
+        self.SetMenuBar(menuBar)
+        self.Bind(wx.EVT_MENU, self.OnQuit, fileItem)
+        self.Bind(wx.EVT_MENU, self.DispAbt, aboutItem)
+
+        self.panel = wx.Panel(self, -1)
+
+        basicLabel = wx.StaticText(self.panel, -1, "Username:   ")
+        self.basicText = wx.TextCtrl(self.panel, -1, "", size=(175, -1))
+        self.basicText.SetInsertionPoint(0)
+
+        pwdLabel = wx.StaticText(self.panel, -1, "Password:   ")
+        self.pwdText = wx.TextCtrl(self.panel, -1, "", size=(175, -1), style=wx.TE_PASSWORD)
+        self.pwdText.SetInsertionPoint(0)
+
+        self.onErr = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onRestart = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onExc = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onHT = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onFtnft = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onDlock = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onParseParam = wx.CheckBox(self.panel, 1, 'Alert')
+        self.onServRst = wx.CheckBox(self.panel, 1, 'Alert')
+
+        self.map_button = wx.Button(self.panel, wx.ID_OK, "Map")
+        self.map_button.Bind(wx.EVT_BUTTON, self.OnMap)
+
+        self.mainSizer = wx.BoxSizer(wx.VERTICAL)
+        unameSizer = wx.BoxSizer(wx.HORIZONTAL)
+        pwdSizer = wx.BoxSizer(wx.HORIZONTAL)
+        btnSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onErrSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onRestartSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onExcSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onHTSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onFtnftSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onDlockSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onParamSizer = wx.BoxSizer(wx.HORIZONTAL)
+        onServRstSizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        unameSizer.Add(basicLabel, 0, wx.CENTER, 5)
+        unameSizer.Add(self.basicText, 1, wx.CENTER, 5)
+
+        pwdSizer.Add(pwdLabel, 0, wx.CENTER, 5)
+        pwdSizer.Add(self.pwdText, 1, wx.CENTER, 5)
+
+        btnSizer.Add(self.map_button, 0, wx.CENTER, 5)
+        onErrSizer.Add(self.onErr, 0, wx.LEFT, 5)
+        onRestartSizer.Add(self.onRestart, 1, wx.LEFT, 5)
+        onExcSizer.Add(self.onExc, 2, wx.LEFT, 5)
+        onHTSizer.Add(self.onHT, 0, wx.LEFT, 5)
+        onFtnftSizer.Add(self.onFtnft, 0, wx.LEFT, 5)
+        onDlockSizer.Add(self.onDlock, 0, wx.LEFT, 5)
+        onParamSizer.Add(self.onParseParam, 0, wx.LEFT, 5)
+        onServRstSizer.Add(self.onServRst, 0, wx.LEFT, 5)
+
+        self.mainSizer.Add(unameSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(pwdSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(btnSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(onErrSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onRestartSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onExcSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onHTSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onFtnftSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onDlockSizer, 0, wx.ALL|wx.LEFT, 5) # check after this
+        self.mainSizer.Add(onParamSizer, 0, wx.ALL|wx.LEFT, 5)
+        self.mainSizer.Add(onServRstSizer, 0, wx.ALL|wx.LEFT, 5)        
+
+        self.panel.SetSizer(self.mainSizer)
+        self.panel.Layout()
+
+        self.SetTransparent(self.amount)
+
+        self.timer = wx.Timer(self, wx.ID_ANY)
+        self.timer.Start(20)
+        self.Bind(wx.EVT_TIMER, self.AlphaCycle)
+        
+        self.Centre()
+        self.Show(True)
+
+        
+    def OnMap(self, event):
+        self.basicText.Enable(False)
+        self.pwdText.Enable(False)
+        self.map_button.Enable(False)
+        self.onErr.Enable(False)
+        self.onRestart.Enable(False)
+        self.onExc.Enable(False)
+        self.onHT.Enable(False)
+        self.onFtnft.Enable(False)
+        self.onDlock.Enable(False)
+        self.onParseParam.Enable(False)
+        self.onServRst.Enable(False)
+
+        global alertOnError
+        global alertOnRestart
+        global alertOnException
+        global alertOnHT
+        global alertOnFtnft
+        global alertOnDeadlock
+        global alertOnParseParam
+        global alertOnServRst
+
+        
+        if self.basicText.GetValue() == "" and self.pwdText.GetValue() == "":
+            dlg = wx.MessageDialog(self, "Error -- no uname/passwd -- Exiting", "Information", wx.OK)
+            if dlg.ShowModal() == wx.ID_OK:
+                self.Destroy()
+                sys.exit()
+        else:
+            if MapNetworkDrive(self.basicText.GetValue(), self.pwdText.GetValue()):
+                self.mapLabel = wx.StaticText(self.panel, -1, "Mapped Drives, close the window, don't quit")
+                self.mapSizer = wx.BoxSizer(wx.HORIZONTAL)
+                self.mapSizer.Add(self.mapLabel, 1, wx.ALL | wx.CENTER, 5)
+                self.mainSizer.Add(self.mapSizer, 1, wx.ALL | wx.CENTER, 5)
+
+                self.panel.SetSizer(self.mainSizer)
+                self.panel.Layout()
+        if self.onErr.GetValue():
+            alertOnError = True
+        else:
+            alertOnError = False
+
+        if self.onRestart.GetValue():
+            alertOnRestart = True
+        else:
+            alertOnRestart = False
+
+        if self.onExc.GetValue():
+            alertOnException = True
+        else:
+            alertOnException = False
+
+        if self.onHT.GetValue():
+            alertOnHT = True
+        else:
+            alertOnHT = False
+
+        if self.onFtnft.GetValue():
+            alertOnFtnft = True
+        else:
+            alertOnFtnft = False
+
+        if self.onDlock.GetValue():
+            alertOnDeadlock = True
+        else:
+            alertOnDeadlock = False
+
+        if self.onParseParam.GetValue():
+            alertOnParseParam = True
+        else:
+            alertOnParseParam = False
+
+        if self.onServRst.GetValue():
+            alertOnServRst = True
+        else:
+            alertOnServRst = False
+
+    def OnQuit(self, e):
+        self.Close()
+        sys.exit()
+
+    def DispAbt(self, inp):
+        wx.MessageBox("Author: idiotTCSer", "Python Text Monitor", wx.OK | wx.ICON_INFORMATION)
+
+def readFile(mode, inpList=[]):
+    readLog = None
+    writeFile = None
+    
+    if str(mode) == "mode":
+        readLog = "file_to_read"
+        writeFile = open("file_to_write", "w")
+
+    
+    iterLoop = 0
+    lineNum = 0
+
+    global alertOnError
+    global alertOnRestart
+    global alertOnException
+    global alertOnHT
+    global alertOnFtnft
+    global alertOnDeadlock
+    global alertOnParseParam
+    global alertOnServRst
+    
+    print 'Reading ' + str(mode)
+    lgmApp = wx.App()
+
+    regexPattern = '.*?(?P<order>[0-9]+)'
+    
+    for line in fileinput.input([readLog]):
+        if ".SERV" in str(mode):
+            if " E " in line:
+                try:
+                    if line[0:(line.index("]")+1)] not in inpList and alertOnError:
+                        # throw an alert
+                        wx.MessageBox(mode + " Error  found at " + line[1:(line.index("]"))], "Error", wx.OK | wx.ICON_INFORMATION | wx.STAY_ON_TOP)
+                        inpList.append(line[0:(line.index("]")+1)])
+            elif "another_error" in line:
+		if alertOnHT and line[0:(line.index("]")+1)] not in inpList:
+			wx.MessageBox(mode + " another_error found at " + line[1:(line.index("]"))] + " Total another_error count: " + str((re.compile(regexPattern).search(line[line.index("There is/are"):])).group('order')), "Hung Thread", wx.OK | wx.ICON_INFORMATION | wx.STAY_ON_TOP)
+			inpList.append(line[0:(line.index("]")+1)])
+		else:
+			pass
+                writeFile.writelines(line)
+        elif ".APP" in str(mode):
+            if " ERROR " in line:
+                writeFile.writelines('FOUND_ERROR\n')
+                writeFile.writelines(line)
+    writeFile.close()
+
+
+    fileToCopy = None
+    copyDest = None
+    isFileExist = False
+    if str(mode) == "mode":
+        fileToCopy = "file_to_copy"
+        copyDest = "copy_destination"
+
+    # check if the file exists or not
+    try:
+        existFile = file(str(copyDest))
+        isFileExist = True
+        existFile.close()
+    except IOError as exc:
+        isFileExist = False
+
+    if isFileExist:
+        if os.path.getsize(str(fileToCopy)) == os.path.getsize(str(copyDest)):
+            pass
+        else:
+            shutil.copyfile(str(fileToCopy), str(copyDest))
+    else:
+        shutil.copyfile(str(fileToCopy), str(copyDest))
+
+
+def main():
+    print "Working"
+    
+    testApp = wx.App()
+
+    tpBox(None, title="Log Monitor Release Build Version 4.2", style=wx.MINIMIZE_BOX | wx.SYSTEM_MENU | wx.CAPTION | wx.CLOSE_BOX)  # no_maximize
+
+    testApp.MainLoop()
+
+
+    inpList = []
+
+    # Check if file exists or not
+    readBuffer = None
+    writeLogFile = None
+
+    global alertOnError
+    global alertOnRestart
+    global alertOnException
+    global alertOnHT
+    global alertOnFtnft
+    global alertOnDeadlock
+    global alertOnParseParam
+
+    if os.path.isfile("C:\\temp\\usrLogs\\userLog.lgm") and os.access("C:\\temp\\usrLogs\\userLog.lgm", os.R_OK):
+        fileInst = open("C:\\temp\\usrLogs\\userLog.lgm", 'r')
+        readBuffer = fileInst.read()
+        fileInst.close()
+    elif os.path.isfile("C:\\temp\\usrLogs\\userLog.lgm") and not os.access("C:\\temp\\usrLogs\\userLog.lgm", os.R_OK):
+        print 'File present but read stream corrupt'
+    else:
+        readBuffer = None
+
+    if readBuffer == None:
+        writeLogFile = open("C:\\temp\\usrLogs\\userLog.lgm", 'w')
+        writeLogFile.write(str(time.asctime(time.localtime(time.time()))) + '\n\n')
+        writeLogFile.write('Status Alert on error : ' + str(alertOnError) + '\n')
+        writeLogFile.close()
+    else:
+        writeLogFile = open("C:\\temp\\usrLogs\\userLog.lgm", 'w')
+        readBuffer += '\n'
+        writeLogFile.write(readBuffer)
+        writeLogFile.write(str(time.asctime(time.localtime(time.time()))) + '\n\n')
+        writeLogFile.write('Status Alert on error : ' + str(alertOnError) + '\n')
+        writeLogFile.close()
+
+    try:
+        while True:
+            readFile("mode", inpList)
+    except Exception as exc:
+        wx.MessageBox('Error Happened ' + str(exc), "Python Text monitor", wx.OK | wx.ICON_INFORMATION)
+        #traceback.print_exc()
+        #print exc
+        # _asm --> spoiler
+        # mov ah, 00h
+        # int 21h --> bad practice, not always clears the buffer mem
+
+if __name__ == "__main__":
+    main()
