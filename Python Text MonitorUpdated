@@ -1,0 +1,383 @@
+import wx
+import sys
+
+# for the mapping of drives
+import win32wnet
+import win32com.client
+from win32netcon import RESOURCETYPE_DISK as DISK
+import os
+import time
+from threading import Thread
+import fileinput
+import datetime
+import hashlib
+import xlrd
+
+# purge container
+lsLogFilePath = []
+dictDriveMap = {}
+configFilePath = './LogConfig.config'
+
+appErrLs = []
+sysErrLs = []
+
+errorTypeList = []
+errorLineList = []
+mailReqd = []
+
+def md5CheckSum(filePath):
+    with open(filePath, 'rb') as fh:
+        m = hashlib.md5()
+        while True:
+            data = fh.read(8192)
+            if not data:
+                break;
+            m.update(data)
+        return m.hexdigest()
+
+EVT_RESULT_ID = wx.NewId()
+
+def readErrorData(inpFilePath):
+    global errorTypeList
+    global errorLineList
+    global mailReqd
+
+    workbook = xlrd.open_workbook("./Error.xlsx")
+    worksheet = workbook.sheet_by_index(0)
+
+    tempList = worksheet.col_values(0, 1, worksheet.nrows)
+    for iter in range(0, 3):
+        for index in range(0, len(tempList)):
+            if iter == 0:
+                errorTypeList.append(worksheet.col_values(iter, 1, worksheet.nrows)[index])
+            elif iter == 1:
+                errorLineList.append(worksheet.col_values(iter, 1, worksheet.nrows)[index])
+            else:
+                mailReqd.append(worksheet.col_values(iter, 1, worksheet.nrows)[index])
+
+def readConfigData(inpUser, inpPasswd, configFilePath):
+    global lsLogFilePath
+    global dictDriveMap
+
+    # start reading the config file
+    for line in fileinput.input([str(configFilePath)]):
+        # first handle comments
+        if line[0] == chr(0x3b):
+            pass
+        elif 'logFilePath' in line:
+            lsLogFilePath.append(line[line.index('logFilePath') + len('logFilePath') + 4 : ].strip())
+        elif 'DriveMap' in line:
+           if '|' in line[line.index('DriveMap') + len('DriveMap') + 5 : ].strip():
+               dictDriveMap[(line[line.index('DriveMap') + len('DriveMap') + 5 : ].strip())[0 : (line[line.index('DriveMap') + len('DriveMap') + 5 : ].strip()).index('|')].strip()] = (line[line.index('DriveMap') + len('DriveMap') + 5 : ].strip())[(line[line.index('DriveMap') + len('DriveMap') + 5 : ].strip()).index('|') + 1 :].strip() + ':'
+
+    readErrorData("./Error.xls.xlsx")
+    return True
+
+def EVT_RESULT(win, func):
+    '''
+        Define result event
+    '''
+    win.Connect(-1, -1, EVT_RESULT_ID, func)
+
+class ResultEvent(wx.PyEvent):
+    '''
+        Simple event to carry arbit result data
+    '''
+    def __init__(self, data):
+        '''
+            Init result event
+        '''
+        wx.PyEvent.__init__(self)
+        self.SetEventType(EVT_RESULT_ID)
+        self.data = data
+
+def frmtdDate():
+    index = -1
+    datesplice = []
+    revdate = ''
+
+    while index > -len(str(datetime.datetime.now())[0:str(datetime.datetime.now()).index(' ')]) - 1:
+        if str(datetime.datetime.now())[0:str(datetime.datetime.now()).index(' ')][index] != '-':
+            datesplice.insert(0, str(datetime.datetime.now())[0:str(datetime.datetime.now()).index(' ')][index])
+        else:
+            for iter in range(0, len(datesplice)):
+                revdate += datesplice[iter]
+            datesplice = []
+            revdate += '/'
+        if index == -len(str(datetime.datetime.now())[0:str(datetime.datetime.now()).index(' ')]):
+            for iter in range(0, len(datesplice)):
+                revdate += datesplice[iter]
+            datesplice = []
+        index = index - 1
+
+    return revdate
+
+def createOlMail(inpTo, inpCc, inpSub, inpBod, inpSig):
+    ''' Will create an outlook mail object and open it up '''
+    olMailItem = 0x0
+    obj = win32com.client.Dispatch("Outlook.Application")
+    newmail = obj.CreateItem(olMailItem)
+
+    newmail.To = inpTo
+    newmail.Cc = inpCc
+
+    newmail.Subject = inpSub
+    newmail.Body = inpBod + '\n\n' + str(inpSig)
+    newmail.display()
+    newmail.Send()
+
+class ReadFileThread(Thread):
+    bodyMsg = ''
+
+    def __init__(self, wxObject):
+        Thread.__init__(self)
+        self.wxObject = wxObject
+        self.start()
+    def run(self):
+        wx.PostEvent(self.wxObject, ResultEvent("Starting read of files"))
+        time.sleep(2)
+
+        global lsLogFilePath
+        global appErrLs
+        global sysErrLs
+
+        global errorTypeList
+        global errorLineList
+        global mailReqd
+
+        readBuffer = None
+
+
+        for fileIndex in range(0, len(lsLogFilePath)):
+            wx.PostEvent(self.wxObject, ResultEvent('Reading File : ' + str(lsLogFilePath[fileIndex])))
+            print "Reading File : " + str(lsLogFilePath[fileIndex])
+            for line in fileinput.input([str(lsLogFilePath[fileIndex])]):
+                if 'LOG_FILE' in lsLogFilePath[fileIndex]:
+                    for errIndex in range(0, len(errorTypeList)):
+                        if errorTypeList[errIndex] == 'ERROR':
+                            try:
+                                if 'ERROR' in line and errorLineList[errIndex] in line:
+                                    if line[0:23] not in appErrLs:
+                                        appErrLs.append(line[0:23])
+                                        wx.MessageBox("Error found at : " + str(line[0:23]) + ' : ' + str(line[23:]), "Application Error", wx.OK | wx.ICON_INFORMATION | wx.STAY_ON_TOP)
+                                        if mailReqd[errIndex] == "Yes":
+                                            wx.PostEvent(self.wxObject, ResultEvent("Mail : " + line))
+                                        self.writeFile(line, str(lsLogFilePath[fileIndex]))
+                                    else:
+                                        pass
+                            except:
+                                pass
+                else:
+                    for errIndex in range(0, len(errorTypeList)):
+                        if errorTypeList[errIndex] == ' E ':
+                            if ' E ' in line and errorLineList[errIndex] in line:
+                                if line[0:27] not in sysErrLs:
+                                    sysErrLs.append(line[0:27])
+                                    wx.MessageBox("Error found at : " + str(line[0:27]) + ' : ' + str(line[27:]), "System Error", wx.OK | wx.ICON_INFORMATION | wx.STAY_ON_TOP)
+                                    if mailReqd[errIndex] == "Yes":
+                                        wx.PostEvent(self.wxObject, ResultEvent("Mail : " + line))
+                                    self.writeFile(line, str(lsLogFilePath[fileIndex]))
+                                else:
+                                    pass
+            wx.PostEvent(self.wxObject, ResultEvent('File Reading complete : ' + str(lsLogFilePath[fileIndex])))
+        time.sleep(1)
+        wx.PostEvent(self.wxObject, ResultEvent("Processing Finished"))
+        print '\n'
+
+    def writeFile(self, inpLine, fileName):
+        readBuffer = None
+        if os.path.isfile("C:\\temp\\usrLogs\\userLog.lgm") and os.access("C:\\temp\\usrLogs\\userLog.lgm", os.R_OK):
+            fileInst = open("C:\\temp\\usrLogs\\userLog.lgm", 'r')
+            readBuffer = fileInst.read()
+            fileInst.close()
+        elif os.path.isfile("C:\\temp\\usrLogs\\userLog.lgm") and not os.access("C:\\temp\\usrLogs\\userLog.lgm", os.R_OK):
+            print 'File present but read stream corrupt'
+        else:
+            readBuffer = None
+
+        writeLogFile = open("C:\\temp\\usrLogs\\userLog.lgm", 'w')
+
+        if readBuffer == None:
+            writeLogFile.write(fileName + " :: " + inpLine)
+        else:
+            writeLogFile.write(readBuffer)
+            writeLogFile.write(fileName + " :: " + inpLine)
+
+        writeLogFile.close()
+
+
+def mapDrive(inpDriveLetter, lpRmtName, inpUser, inpPasswd):
+    try:
+        if os.path.exists(str(inpDriveLetter)):
+            network = win32com.client.Dispatch("WScript.Network")
+            network.RemoveNetworkDrive(str(inpDriveLetter), True, True)
+
+            resource = win32wnet.NETRESOURCE()
+            resource.lpRemoteName = str(lpRmtName)
+            win32wnet.WNetAddConnection2(resource, Password=inpPasswd, UserName=inpUser)
+            win32wnet.WNetAddConnection2(DISK, str(inpDriveLetter), str(lpRmtName))
+        else:
+            resource = win32wnet.NETRESOURCE()
+            resource.lpRemoteName = str(lpRmtName)
+            win32wnet.WNetAddConnection2(resource, Password=inpPasswd, UserName=inpUser)
+            win32wnet.WNetAddConnection2(DISK, str(inpDriveLetter), str(lpRmtName))
+    except Exception as exc:
+        print exc
+
+# define the class to create the UI for this  qtiyapa
+class qtiyaBox(wx.Frame):
+    progress = 0
+    count = 0
+    def __init__(self, parent, title, style):
+        super(qtiyaBox, self).__init__(parent, title = title, style = style, size = (400, 300))
+        self.dispUI()
+
+    def dispUI(self):
+        menuBar = wx.MenuBar()
+        fileMenu = wx.Menu()
+        helpMenu = wx.Menu()
+
+        quitItem = fileMenu.Append(wx.ID_EXIT, "Quit Script run", "Quit script")
+        aboutItem = helpMenu.Append(wx.ID_ANY, "About Python Text Monitor", "Python Text Monitor Help")
+
+        menuBar.Append(fileMenu, "&File")
+        menuBar.Append(helpMenu, "&Help")
+        self.SetMenuBar(menuBar)
+
+        # create a status bar
+        self.CreateStatusBar(style=0)
+        self.SetStatusText("UTISA QTP")
+
+        # binding to functions
+        self.Bind(wx.EVT_MENU, self.OnQuit, quitItem)
+        self.Bind(wx.EVT_MENU, self.OnAbt, aboutItem)
+
+        # overall panel
+        self.panel = wx.Panel(self, -1)
+
+        unameLabel = wx.StaticText(self.panel, -1, "Username :   ")
+        self.unameText = wx.TextCtrl(self.panel, -1, "<domain>\<username>", size = (175, -1))
+        self.unameText.SetInsertionPoint(0)
+
+        pwdLabel = wx.StaticText(self.panel, -1, "Password :   ")
+        self.pwdText = wx.TextCtrl(self.panel, -1, "", size = (175, -1), style = wx.TE_PASSWORD)
+        self.pwdText.SetInsertionPoint(0)
+
+        self.map_button = wx.Button(self.panel, wx.ID_OK, "Map")
+        self.map_button.Bind(wx.EVT_BUTTON, self.OnMap)
+        self.stRdButton = wx.Button(self.panel, wx.ID_OK, "Process")
+        self.stRdButton.Bind(wx.EVT_BUTTON, self.OnRead)
+
+        self.mrqPgBar = wx.Gauge(self.panel, range = 100, size = (398, 15))
+
+        toLabel = wx.StaticText(self.panel, -1, "To :   ")
+        self.toText = wx.TextCtrl(self.panel, -1, "<maileRcpt1>;<mailRcpt2>", style=wx.TE_MULTILINE, size=(175, -1))
+        fromLabel = wx.StaticText(self.panel, -1, "CC :  ")
+        self.fromText = wx.TextCtrl(self.panel, -1, "<CCEmail1>;<CCEmail2>", style = wx.TE_MULTILINE, size=(175, -1))
+
+        self.mainSizer = wx.BoxSizer(wx.VERTICAL)
+        unameSizer = wx.BoxSizer(wx.HORIZONTAL)
+        pwdSizer = wx.BoxSizer(wx.HORIZONTAL)
+        btnSizer = wx.BoxSizer(wx.HORIZONTAL)
+        rdBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
+        toMailSizer = wx.BoxSizer(wx.HORIZONTAL)
+        fromMailSizer = wx.BoxSizer(wx.HORIZONTAL)
+        mrqSizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        unameSizer.Add(unameLabel, 0, wx.CENTER, 5)
+        unameSizer.Add(self.unameText, 1, wx.CENTER, 5)
+        pwdSizer.Add(pwdLabel, 0, wx.CENTER, 5)
+        pwdSizer.Add(self.pwdText, 1, wx.CENTER, 5)
+        btnSizer.Add(self.map_button, 0, wx.CENTER, 5)
+        rdBtnSizer.Add(self.stRdButton, 0, wx.CENTER, 5)
+        toMailSizer.Add(toLabel, 0, wx.CENTER, 5)
+        toMailSizer.Add(self.toText, 1, wx.CENTER, 5)
+        fromMailSizer.Add(fromLabel, 0, wx.CENTER, 5)
+        fromMailSizer.Add(self.fromText, 1, wx.CENTER, 5)
+        mrqSizer.Add(self.mrqPgBar, 0, wx.CENTER, 5)
+
+        self.mainSizer.Add(unameSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(pwdSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(btnSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(rdBtnSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(toMailSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(fromMailSizer, 0, wx.ALL|wx.CENTER, 5)
+        self.mainSizer.Add(mrqSizer, 0, wx.ALL|wx.CENTER, 5)
+
+        self.panel.SetSizer(self.mainSizer)
+        self.panel.Layout()
+
+        self.stRdButton.Enable(False)
+
+        EVT_RESULT(self, self.updateStatus)
+
+        self.Centre()
+        self.Show(True)
+
+    def OnRead(self, event):
+        ReadFileThread(self)
+        self.SetStatusText("Processing Started")
+        self.stRdButton = event.GetEventObject()
+        self.stRdButton.Disable()
+
+    def updateStatus(self, msg):
+        inpDat = msg.data
+        if isinstance(inpDat, str):
+            if self.count >= 0:
+                self.progress = self.progress + 1
+                self.count = self.count + 1
+                if self.progress >= 100:
+                    self.progress = 0
+                    self.mrqPgBar.SetValue(self.progress)
+                self.mrqPgBar.SetValue(self.progress)
+                self.SetStatusText(str(inpDat))
+            if 'Mail : ' in inpDat:
+                try:
+                    createOlMail(self.toText.GetValue(), '', 'Python Text Monitor mailer - Data Mail', inpDat[8:], 'With no feelings and Regards\nPython Text Monitor')
+                except:
+                    pass
+
+            if 'Processing Finished' in inpDat:
+                self.SetStatusText(str(inpDat))
+                time.sleep(2)
+                ReadFileThread(self)
+                self.mrqPgBar.SetValue(0)
+                self.SetStatusText('Processing Again started')
+
+    # required member functions
+    def OnQuit(self, evt):
+        self.Close()
+        sys.exit()
+
+    def OnAbt(self, evt):
+        wx.MessageBox("Author : idiotTCSer\r\n\nPlatform : Windows\r\n\nLanguage : Python 2.7.x", "Python Text Monitor", wx.OK | wx.ICON_INFORMATION)
+
+    def OnMap(self, event):
+        self.unameText.Enable(False)
+        self.pwdText.Enable(False)
+        self.map_button.Enable(False)
+        global configFilePath
+
+        if (self.unameText.GetValue() == '<domain>\<username>' or self.unameText.GetValue() == '') and self.pwdText.GetValue() == '':
+            wx.MessageBox("Either username or password field is empty", "Python Text Monitor", wx.OK | wx.ICON_INFORMATION)
+            # re-enable everything again
+            self.unameText.Enable(True)
+            self.pwdText.Enable(True)
+            self.map_button.Enable(True)
+            self.mrqPgBar.SetValue(20)
+            return
+        else:
+
+            if readConfigData(self.unameText.GetValue(), self.pwdText.GetValue(), str(configFilePath)):
+                self.SetStatusText("Drives have been mapped")
+                self.mrqPgBar.SetValue(0) # This means that the drives have been successfully mapped
+                self.stRdButton.Enable(True)
+    
+def main():
+    print 'Working'
+    appInst = wx.App(redirect=False)
+    qtiyaBox(None, title="UTISA QTP", style=wx.MINIMIZE_BOX | wx.SYSTEM_MENU | wx.CAPTION | wx.CLOSE_BOX)
+    appInst.MainLoop()
+
+if __name__ == '__main__':
+    main()
